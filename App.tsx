@@ -21,6 +21,7 @@ import {
 } from 'react-native-safe-area-context';
 
 import {
+  IntervalUnit,
   Reminder,
   deleteReminder,
   getReminders,
@@ -69,6 +70,19 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+const INTERVAL_UNITS: IntervalUnit[] = ['day', 'week', 'month', 'year'];
+
+const UNIT_TO_DAYS: Record<IntervalUnit, number> = {
+  day: 1,
+  week: 7,
+  month: 30,
+  year: 365,
+};
+
+function unitLabel(unit: IntervalUnit, value: number): string {
+  return `${unit}${value === 1 ? '' : 's'}`;
+}
+
 function getDueDate(reminder: Reminder, now: Date): Date {
   const anchor = new Date(reminder.startDate);
   return reminder.repeats
@@ -96,7 +110,8 @@ function ReminderApp() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [notificationTime, setNotificationTime] = useState(defaultNotificationTime());
   const [showTimePicker, setShowTimePicker] = useState(false);
-  const [intervalDays, setIntervalDays] = useState('7');
+  const [intervalValue, setIntervalValue] = useState('7');
+  const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('day');
   const [repeats, setRepeats] = useState(true);
 
   const loadReminders = useCallback(async () => {
@@ -117,7 +132,8 @@ function ReminderApp() {
     setTitle('');
     setStartDate(startOfDay(new Date()));
     setNotificationTime(defaultNotificationTime());
-    setIntervalDays('7');
+    setIntervalValue('7');
+    setIntervalUnit('day');
     setRepeats(true);
   }
 
@@ -132,20 +148,22 @@ function ReminderApp() {
     setTitle(reminder.title);
     setStartDate(startOfDay(anchor));
     setNotificationTime(anchor);
-    setIntervalDays(String(reminder.intervalDays));
+    setIntervalValue(String(reminder.intervalValue));
+    setIntervalUnit(reminder.intervalUnit);
     setRepeats(!!reminder.repeats);
     setEditingId(reminder.id);
     setModalVisible(true);
   }
 
   async function handleSubmit() {
-    const parsedInterval = parseInt(intervalDays, 10);
-    const interval = repeats ? parsedInterval : Number.isFinite(parsedInterval) ? parsedInterval : 1;
-    if (!title.trim() || (repeats && (!Number.isFinite(interval) || interval < 1))) return;
+    const parsedValue = parseInt(intervalValue, 10);
+    const value = repeats ? parsedValue : Number.isFinite(parsedValue) && parsedValue >= 1 ? parsedValue : 1;
+    if (!title.trim() || (repeats && (!Number.isFinite(value) || value < 1))) return;
 
+    const intervalDays = value * UNIT_TO_DAYS[intervalUnit];
     const anchor = combineDateAndTime(startDate, notificationTime);
     const now = new Date();
-    const firstDueDate = repeats ? computeNextDueDate(anchor, interval, now) : anchor;
+    const firstDueDate = repeats ? computeNextDueDate(anchor, intervalDays, now) : anchor;
 
     if (editingId !== null) {
       const existing = reminders.find((r) => r.id === editingId);
@@ -156,14 +174,16 @@ function ReminderApp() {
       const { notificationId, repeatingNotificationId } = await scheduleReminderNotifications(
         title.trim(),
         firstDueDate,
-        interval,
+        intervalDays,
         repeats
       );
       await updateReminder(
         editingId,
         title.trim(),
         anchor.toISOString(),
-        interval,
+        value,
+        intervalUnit,
+        intervalDays,
         repeats,
         notificationId,
         repeatingNotificationId
@@ -172,13 +192,15 @@ function ReminderApp() {
       const { notificationId, repeatingNotificationId } = await scheduleReminderNotifications(
         title.trim(),
         firstDueDate,
-        interval,
+        intervalDays,
         repeats
       );
       await insertReminder(
         title.trim(),
         anchor.toISOString(),
-        interval,
+        value,
+        intervalUnit,
+        intervalDays,
         repeats,
         notificationId,
         repeatingNotificationId
@@ -244,7 +266,7 @@ function ReminderApp() {
                 <Text style={styles.rowTitle}>{item.title}</Text>
                 <Text style={styles.rowSubtitle}>
                   {item.repeats
-                    ? `Every ${item.intervalDays} day${item.intervalDays === 1 ? '' : 's'} · next `
+                    ? `Every ${item.intervalValue} ${unitLabel(item.intervalUnit, item.intervalValue)} · next `
                     : 'Once · '}
                   {formatDateTime(dueDate)}
                 </Text>
@@ -321,19 +343,42 @@ function ReminderApp() {
             )}
 
             <View style={styles.repeatHeaderRow}>
-              <Text style={styles.label}>Repeat every (days)</Text>
+              <Text style={styles.label}>Repeat every</Text>
               <View style={styles.happensOnceRow}>
                 <Text style={styles.happensOnceLabel}>Happens once</Text>
                 <Switch value={!repeats} onValueChange={(value) => setRepeats(!value)} />
               </View>
             </View>
-            <TextInput
-              style={[styles.input, !repeats && styles.inputDisabled]}
-              value={intervalDays}
-              onChangeText={setIntervalDays}
-              keyboardType="number-pad"
-              editable={repeats}
-            />
+            <View style={styles.intervalRow}>
+              <TextInput
+                style={[styles.input, styles.intervalValueInput, !repeats && styles.inputDisabled]}
+                value={intervalValue}
+                onChangeText={(text) => setIntervalValue(text.replace(/[^0-9]/g, ''))}
+                keyboardType="number-pad"
+                editable={repeats}
+              />
+              <View style={styles.unitRow}>
+                {INTERVAL_UNITS.map((unit) => {
+                  const selected = unit === intervalUnit;
+                  return (
+                    <Pressable
+                      key={unit}
+                      onPress={() => setIntervalUnit(unit)}
+                      disabled={!repeats}
+                      style={[
+                        styles.unitChip,
+                        selected && styles.unitChipSelected,
+                        !repeats && styles.inputDisabled,
+                      ]}
+                    >
+                      <Text style={[styles.unitChipText, selected && styles.unitChipTextSelected]}>
+                        {unitLabel(unit, intervalValue === '1' ? 1 : 2)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
 
             <View style={styles.modalActions}>
               <Pressable
@@ -466,6 +511,39 @@ const styles = StyleSheet.create({
   happensOnceLabel: {
     fontSize: 13,
     color: '#666',
+  },
+  intervalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  intervalValueInput: {
+    width: 64,
+  },
+  unitRow: {
+    flexDirection: 'row',
+    flex: 1,
+    gap: 6,
+  },
+  unitChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#ccc',
+  },
+  unitChipSelected: {
+    backgroundColor: '#2f6fed',
+    borderColor: '#2f6fed',
+  },
+  unitChipText: {
+    fontSize: 13,
+    color: '#333',
+  },
+  unitChipTextSelected: {
+    color: '#fff',
+    fontWeight: '600',
   },
   modalActions: {
     flexDirection: 'row',
