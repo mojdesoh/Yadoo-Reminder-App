@@ -7,6 +7,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -15,6 +16,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Picker } from '@react-native-picker/picker';
 import { Ionicons } from '@expo/vector-icons';
 import {
   SafeAreaProvider,
@@ -314,10 +316,14 @@ function ReminderApp() {
 
       <Modal visible={modalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalOverlay}
         >
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 20 }]}>
+          <ScrollView
+            style={styles.modalCard}
+            contentContainerStyle={[styles.modalCardContent, { paddingBottom: insets.bottom + 20 }]}
+            keyboardShouldPersistTaps="handled"
+          >
             <Text style={styles.modalHeader}>
               {editingId !== null ? 'Edit Reminder' : 'New Reminder'}
             </Text>
@@ -379,26 +385,22 @@ function ReminderApp() {
                 keyboardType="number-pad"
                 editable={repeats}
               />
-              <View style={styles.unitRow}>
-                {INTERVAL_UNITS.map((unit) => {
-                  const selected = unit === intervalUnit;
-                  return (
-                    <Pressable
+              <View style={[styles.unitPickerWrapper, !repeats && styles.inputDisabled]}>
+                <Picker
+                  selectedValue={intervalUnit}
+                  onValueChange={(value) => setIntervalUnit(value)}
+                  enabled={repeats}
+                  mode="dropdown"
+                  style={styles.unitPicker}
+                >
+                  {INTERVAL_UNITS.map((unit) => (
+                    <Picker.Item
                       key={unit}
-                      onPress={() => setIntervalUnit(unit)}
-                      disabled={!repeats}
-                      style={[
-                        styles.unitChip,
-                        selected && styles.unitChipSelected,
-                        !repeats && styles.inputDisabled,
-                      ]}
-                    >
-                      <Text style={[styles.unitChipText, selected && styles.unitChipTextSelected]}>
-                        {unitLabel(unit, intervalValue === '1' ? 1 : 2)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+                      label={unitLabel(unit, intervalValue === '1' ? 1 : 2)}
+                      value={unit}
+                    />
+                  ))}
+                </Picker>
               </View>
             </View>
 
@@ -419,7 +421,7 @@ function ReminderApp() {
                 </Text>
               </Pressable>
             </View>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
     </View>
@@ -520,6 +522,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
+    maxHeight: '92%',
+  },
+  modalCardContent: {
     padding: 20,
   },
   modalHeader: {
@@ -566,30 +571,16 @@ const styles = StyleSheet.create({
   intervalValueInput: {
     width: 64,
   },
-  unitRow: {
-    flexDirection: 'row',
+  unitPickerWrapper: {
     flex: 1,
-    gap: 6,
-  },
-  unitChip: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#ccc',
+    borderRadius: 8,
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
-  unitChipSelected: {
-    backgroundColor: '#2f6fed',
-    borderColor: '#2f6fed',
-  },
-  unitChipText: {
-    fontSize: 13,
+  unitPicker: {
     color: '#333',
-  },
-  unitChipTextSelected: {
-    color: '#fff',
-    fontWeight: '600',
   },
   modalActions: {
     flexDirection: 'row',
