@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -90,6 +91,7 @@ function ReminderApp() {
   const [ready, setReady] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState(startOfDay(new Date()));
@@ -220,7 +222,11 @@ function ReminderApp() {
   }
 
   const now = new Date();
-  const sortedReminders = [...reminders].sort((a, b) => {
+  const query = searchQuery.trim().toLowerCase();
+  const visibleReminders = query
+    ? reminders.filter((r) => r.title.toLowerCase().includes(query))
+    : reminders;
+  const sortedReminders = [...visibleReminders].sort((a, b) => {
     return getDueDate(a, now).getTime() - getDueDate(b, now).getTime();
   });
 
@@ -229,12 +235,28 @@ function ReminderApp() {
       <StatusBar style="auto" />
       <Text style={styles.header}>Reminders</Text>
 
+      <View style={styles.searchRow}>
+        <TextInput
+          style={styles.searchInput}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search reminders"
+          returnKeyType="search"
+          onSubmitEditing={() => Keyboard.dismiss()}
+        />
+        <Pressable style={styles.searchButton} onPress={() => Keyboard.dismiss()}>
+          <Text style={styles.searchButtonText}>Search</Text>
+        </Pressable>
+      </View>
+
       <FlatList
         style={styles.list}
         data={sortedReminders}
         keyExtractor={(item) => String(item.id)}
         ListEmptyComponent={
-          <Text style={styles.empty}>No reminders yet. Tap + to add one.</Text>
+          <Text style={styles.empty}>
+            {query ? `No reminders match "${searchQuery.trim()}".` : 'No reminders yet. Tap + to add one.'}
+          </Text>
         }
         renderItem={({ item }) => {
           const dueDate = getDueDate(item, now);
@@ -370,6 +392,30 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '700',
     marginBottom: 16,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  searchInput: {
+    flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  searchButton: {
+    backgroundColor: '#2f6fed',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  searchButtonText: {
+    color: '#fff',
+    fontWeight: '600',
   },
   list: {
     flex: 1,
