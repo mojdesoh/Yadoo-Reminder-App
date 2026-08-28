@@ -32,7 +32,7 @@ export function computeNextDueDate(startDate: Date, intervalDays: number, now: D
 async function scheduleOneShot(title: string, dueDate: Date): Promise<string> {
   const seconds = Math.max(1, Math.round((dueDate.getTime() - Date.now()) / 1000));
   return Notifications.scheduleNotificationAsync({
-    content: { title, body: "It's time!" },
+    content: { title, body: `Don't forget "${title}"!` },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds,
@@ -45,7 +45,7 @@ async function scheduleOneShot(title: string, dueDate: Date): Promise<string> {
 // on the app ever being reopened.
 async function scheduleRepeating(title: string, intervalDays: number): Promise<string> {
   return Notifications.scheduleNotificationAsync({
-    content: { title, body: "It's time!" },
+    content: { title, body: `Don't forget "${title}"!` },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds: intervalDays * 24 * 60 * 60,
