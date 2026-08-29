@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
-  FlatList,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -14,6 +13,14 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import ReorderableList, {
+  ReorderableListReorderEvent,
+  reorderItems,
+  useIsActive,
+  useReorderableDrag,
+} from 'react-native-reorderable-list';
+import type { ListRenderItemInfo } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
@@ -31,6 +38,7 @@ import {
   initDb,
   insertReminder,
   updateReminder,
+  updateReminderOrder,
 } from './lib/db';
 import {
   androidChannelSetup,
@@ -93,11 +101,54 @@ function getDueDate(reminder: Reminder, now: Date): Date {
     : anchor;
 }
 
+function ReminderRow({
+  item,
+  now,
+  dragDisabled,
+  onEdit,
+  onDelete,
+}: {
+  item: Reminder;
+  now: Date;
+  dragDisabled: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const drag = useReorderableDrag();
+  const isActive = useIsActive();
+  const dueDate = getDueDate(item, now);
+  return (
+    <View style={[styles.row, isActive && styles.rowActive]}>
+      <Pressable
+        style={{ flex: 1 }}
+        onLongPress={dragDisabled ? undefined : drag}
+        delayLongPress={200}
+      >
+        <Text style={styles.rowTitle}>{item.title}</Text>
+        <Text style={styles.rowSubtitle}>
+          {item.repeats
+            ? `Every ${item.intervalValue} ${unitLabel(item.intervalUnit, item.intervalValue)} · next `
+            : 'Once · '}
+          {formatDateTime(dueDate)}
+        </Text>
+      </Pressable>
+      <Pressable onPress={onEdit} hitSlop={12} style={styles.iconButton}>
+        <Ionicons name="pencil-outline" size={20} color="#2f6fed" />
+      </Pressable>
+      <Pressable onPress={onDelete} hitSlop={12} style={styles.iconButton}>
+        <Ionicons name="trash-outline" size={20} color="#d33" />
+      </Pressable>
+    </View>
+  );
+}
+
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <ReminderApp />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <ReminderApp />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -250,9 +301,13 @@ function ReminderApp() {
   const visibleReminders = query
     ? reminders.filter((r) => r.title.toLowerCase().includes(query))
     : reminders;
-  const sortedReminders = [...visibleReminders].sort((a, b) => {
-    return getDueDate(a, now).getTime() - getDueDate(b, now).getTime();
-  });
+
+  async function handleReorder({ from, to }: ReorderableListReorderEvent) {
+    if (query) return; // reordering is only meaningful against the full, unfiltered list
+    const newOrder = reorderItems(visibleReminders, from, to);
+    setReminders(newOrder);
+    await updateReminderOrder(newOrder.map((r) => r.id));
+  }
 
   return (
     <View style={styles.container}>
@@ -273,41 +328,26 @@ function ReminderApp() {
         </Pressable>
       </View>
 
-      <FlatList
+      <ReorderableList
         style={styles.list}
-        data={sortedReminders}
+        data={visibleReminders}
         keyExtractor={(item) => String(item.id)}
+        onReorder={handleReorder}
+        shouldUpdateActiveItem
         ListEmptyComponent={
           <Text style={styles.empty}>
             {query ? `No reminders match "${searchQuery.trim()}".` : 'No reminders yet. Tap + to add one.'}
           </Text>
         }
-        renderItem={({ item }) => {
-          const dueDate = getDueDate(item, now);
-          return (
-            <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{item.title}</Text>
-                <Text style={styles.rowSubtitle}>
-                  {item.repeats
-                    ? `Every ${item.intervalValue} ${unitLabel(item.intervalUnit, item.intervalValue)} · next `
-                    : 'Once · '}
-                  {formatDateTime(dueDate)}
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => openEditModal(item)}
-                hitSlop={12}
-                style={styles.iconButton}
-              >
-                <Ionicons name="pencil-outline" size={20} color="#2f6fed" />
-              </Pressable>
-              <Pressable onPress={() => handleDelete(item)} hitSlop={12} style={styles.iconButton}>
-                <Ionicons name="trash-outline" size={20} color="#d33" />
-              </Pressable>
-            </View>
-          );
-        }}
+        renderItem={({ item }: ListRenderItemInfo<Reminder>) => (
+          <ReminderRow
+            item={item}
+            now={now}
+            dragDisabled={!!query}
+            onEdit={() => openEditModal(item)}
+            onDelete={() => handleDelete(item)}
+          />
+        )}
       />
 
       <Pressable style={styles.fab} onPress={openAddModal}>
@@ -476,8 +516,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
+    paddingHorizontal: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#ddd',
+    backgroundColor: '#fff',
+  },
+  rowActive: {
+    backgroundColor: '#eef3ff',
+    borderRadius: 10,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    transform: [{ scale: 1.03 }],
   },
   rowTitle: {
     fontSize: 17,

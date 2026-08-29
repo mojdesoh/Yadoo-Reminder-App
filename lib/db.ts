@@ -10,6 +10,7 @@ export type Reminder = {
   intervalUnit: IntervalUnit; // the unit that number is in, e.g. 'month'
   intervalDays: number; // intervalValue converted to days, used for scheduling/due-date math
   repeats: number; // 0 or 1 — whether this reminder recurs, or only happens once
+  sortOrder: number; // manual list position — lower sorts first; new reminders get the lowest value so they land on top
   notificationId: string | null; // one-shot notification for the first occurrence
   repeatingNotificationId: string | null; // native repeating notification for every occurrence after that (null when repeats = 0)
 };
@@ -18,7 +19,7 @@ const db = SQLite.openDatabaseSync('reminders.db');
 
 export async function initDb() {
   const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(reminders)');
-  const hasCurrentSchema = columns.some((c) => c.name === 'intervalUnit');
+  const hasCurrentSchema = columns.some((c) => c.name === 'sortOrder');
   if (columns.length > 0 && !hasCurrentSchema) {
     await db.execAsync('DROP TABLE reminders');
   }
@@ -32,6 +33,7 @@ export async function initDb() {
       intervalUnit TEXT NOT NULL DEFAULT 'day',
       intervalDays INTEGER NOT NULL,
       repeats INTEGER NOT NULL DEFAULT 1,
+      sortOrder INTEGER NOT NULL DEFAULT 0,
       notificationId TEXT,
       repeatingNotificationId TEXT
     );
@@ -39,7 +41,7 @@ export async function initDb() {
 }
 
 export async function getReminders(): Promise<Reminder[]> {
-  return db.getAllAsync<Reminder>('SELECT * FROM reminders ORDER BY id ASC');
+  return db.getAllAsync<Reminder>('SELECT * FROM reminders ORDER BY sortOrder ASC, id ASC');
 }
 
 export async function insertReminder(
@@ -53,7 +55,9 @@ export async function insertReminder(
   repeatingNotificationId: string | null
 ): Promise<number> {
   const result = await db.runAsync(
-    'INSERT INTO reminders (title, startDate, intervalValue, intervalUnit, intervalDays, repeats, notificationId, repeatingNotificationId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    `INSERT INTO reminders
+      (title, startDate, intervalValue, intervalUnit, intervalDays, repeats, sortOrder, notificationId, repeatingNotificationId)
+     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sortOrder), 0) - 1 FROM reminders), ?, ?)`,
     title,
     startDate,
     intervalValue,
@@ -89,6 +93,16 @@ export async function updateReminder(
     repeatingNotificationId,
     id
   );
+}
+
+// Persists a manual drag-to-reorder: assigns sequential sortOrder values
+// matching the given id order.
+export async function updateReminderOrder(orderedIds: number[]) {
+  await db.withTransactionAsync(async () => {
+    for (let index = 0; index < orderedIds.length; index++) {
+      await db.runAsync('UPDATE reminders SET sortOrder = ? WHERE id = ?', index, orderedIds[index]);
+    }
+  });
 }
 
 export async function deleteReminder(id: number) {
