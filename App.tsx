@@ -373,7 +373,7 @@ function ReminderApp() {
               style={styles.input}
               value={title}
               onChangeText={setTitle}
-              placeholder="e.g. Water the fern"
+              placeholder="e.g. Linda's Birthday"
             />
 
             <Text style={styles.label}>Starting day</Text>
@@ -591,11 +591,13 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   input: {
+    height: 44,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#ccc',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    justifyContent: 'center',
+    textAlignVertical: 'center',
   },
   inputDisabled: {
     opacity: 0.4,
@@ -625,6 +627,7 @@ const styles = StyleSheet.create({
   },
   unitPickerWrapper: {
     flex: 1,
+    height: 44,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#ccc',
     borderRadius: 8,
@@ -633,6 +636,9 @@ const styles = StyleSheet.create({
   },
   unitPicker: {
     color: '#333',
+    height: 54,
+    marginTop: -5,
+    marginBottom: -5,
   },
   modalActions: {
     flexDirection: 'row',
