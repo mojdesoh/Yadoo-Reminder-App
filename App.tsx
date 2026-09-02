@@ -94,13 +94,6 @@ function unitLabel(unit: IntervalUnit, value: number): string {
   return `${unit}${value === 1 ? '' : 's'}`;
 }
 
-type IntervalPreset = { key: string; label: string; value: number; unit: IntervalUnit };
-
-const INTERVAL_PRESETS: IntervalPreset[] = [
-  { key: 'preset-2-week', label: '2 weeks', value: 2, unit: 'week' },
-  { key: 'preset-3-month', label: '3 months', value: 3, unit: 'month' },
-];
-
 function getDueDate(reminder: Reminder, now: Date): Date {
   const anchor = new Date(reminder.startDate);
   return reminder.repeats
@@ -434,34 +427,19 @@ function ReminderApp() {
               />
               <View style={[styles.unitPickerWrapper, !repeats && styles.inputDisabled]}>
                 <Picker
-                  selectedValue={
-                    INTERVAL_PRESETS.find(
-                      (p) => p.unit === intervalUnit && String(p.value) === intervalValue
-                    )?.key ?? intervalUnit
-                  }
-                  onValueChange={(key) => {
-                    const preset = INTERVAL_PRESETS.find((p) => p.key === key);
-                    if (preset) {
-                      setIntervalUnit(preset.unit);
-                      setIntervalValue(String(preset.value));
-                    } else {
-                      setIntervalUnit(key as IntervalUnit);
-                    }
-                  }}
+                  selectedValue={intervalUnit}
+                  onValueChange={(value) => setIntervalUnit(value)}
                   enabled={repeats}
                   mode="dropdown"
                   style={styles.unitPicker}
                 >
-                  {INTERVAL_UNITS.flatMap((unit) => [
+                  {INTERVAL_UNITS.map((unit) => (
                     <Picker.Item
                       key={unit}
                       label={unitLabel(unit, intervalValue === '1' ? 1 : 2)}
                       value={unit}
-                    />,
-                    ...INTERVAL_PRESETS.filter((p) => p.unit === unit).map((preset) => (
-                      <Picker.Item key={preset.key} label={preset.label} value={preset.key} />
-                    )),
-                  ])}
+                    />
+                  ))}
                 </Picker>
               </View>
             </View>
