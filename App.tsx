@@ -161,11 +161,13 @@ function ReminderApp() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [title, setTitle] = useState('');
+  const [titleError, setTitleError] = useState(false);
   const [startDate, setStartDate] = useState(startOfDay(new Date()));
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [notificationTime, setNotificationTime] = useState(defaultNotificationTime());
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [intervalValue, setIntervalValue] = useState('7');
+  const [intervalValueError, setIntervalValueError] = useState(false);
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('day');
   const [repeats, setRepeats] = useState(true);
 
@@ -185,9 +187,11 @@ function ReminderApp() {
 
   function resetForm() {
     setTitle('');
+    setTitleError(false);
     setStartDate(startOfDay(new Date()));
     setNotificationTime(defaultNotificationTime());
     setIntervalValue('7');
+    setIntervalValueError(false);
     setIntervalUnit('day');
     setRepeats(true);
   }
@@ -201,9 +205,11 @@ function ReminderApp() {
   function openEditModal(reminder: Reminder) {
     const anchor = new Date(reminder.startDate);
     setTitle(reminder.title);
+    setTitleError(false);
     setStartDate(startOfDay(anchor));
     setNotificationTime(anchor);
     setIntervalValue(String(reminder.intervalValue));
+    setIntervalValueError(false);
     setIntervalUnit(reminder.intervalUnit);
     setRepeats(!!reminder.repeats);
     setEditingId(reminder.id);
@@ -213,7 +219,12 @@ function ReminderApp() {
   async function handleSubmit() {
     const parsedValue = parseInt(intervalValue, 10);
     const value = repeats ? parsedValue : Number.isFinite(parsedValue) && parsedValue >= 1 ? parsedValue : 1;
-    if (!title.trim() || (repeats && (!Number.isFinite(value) || value < 1))) return;
+
+    const isTitleInvalid = !title.trim();
+    const isIntervalValueInvalid = repeats && (!Number.isFinite(value) || value < 1);
+    setTitleError(isTitleInvalid);
+    setIntervalValueError(isIntervalValueInvalid);
+    if (isTitleInvalid || isIntervalValueInvalid) return;
 
     const intervalDays = value * UNIT_TO_DAYS[intervalUnit];
     const anchor = combineDateAndTime(startDate, notificationTime);
@@ -370,9 +381,12 @@ function ReminderApp() {
 
             <Text style={styles.label}>Title</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, titleError && styles.inputError]}
               value={title}
-              onChangeText={setTitle}
+              onChangeText={(text) => {
+                setTitle(text);
+                if (text.trim()) setTitleError(false);
+              }}
               placeholder="e.g. Linda's Birthday"
             />
 
@@ -414,14 +428,29 @@ function ReminderApp() {
               <Text style={styles.label}>Repeat every</Text>
               <View style={styles.happensOnceRow}>
                 <Text style={styles.happensOnceLabel}>Happens once</Text>
-                <Switch value={!repeats} onValueChange={(value) => setRepeats(!value)} />
+                <Switch
+                  value={!repeats}
+                  onValueChange={(value) => {
+                    setRepeats(!value);
+                    if (value) setIntervalValueError(false);
+                  }}
+                />
               </View>
             </View>
             <View style={styles.intervalRow}>
               <TextInput
-                style={[styles.input, styles.intervalValueInput, !repeats && styles.inputDisabled]}
+                style={[
+                  styles.input,
+                  styles.intervalValueInput,
+                  !repeats && styles.inputDisabled,
+                  intervalValueError && styles.inputError,
+                ]}
                 value={intervalValue}
-                onChangeText={(text) => setIntervalValue(text.replace(/[^0-9]/g, ''))}
+                onChangeText={(text) => {
+                  const digitsOnly = text.replace(/[^0-9]/g, '');
+                  setIntervalValue(digitsOnly);
+                  if (digitsOnly && parseInt(digitsOnly, 10) >= 1) setIntervalValueError(false);
+                }}
                 keyboardType="number-pad"
                 editable={repeats}
               />
@@ -601,6 +630,10 @@ const styles = StyleSheet.create({
   },
   inputDisabled: {
     opacity: 0.4,
+  },
+  inputError: {
+    borderWidth: 1.5,
+    borderColor: '#d32f2f',
   },
   repeatHeaderRow: {
     flexDirection: 'row',
