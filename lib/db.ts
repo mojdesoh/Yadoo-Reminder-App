@@ -13,6 +13,7 @@ export type Reminder = {
   sortOrder: number; // manual list position — lower sorts first; new reminders get the lowest value so they land on top
   notificationId: string | null; // one-shot notification for the first occurrence
   repeatingNotificationId: string | null; // native repeating notification for every occurrence after that (null when repeats = 0)
+  createdAt: string; // ISO datetime the reminder was first created; never changes on edit
 };
 
 const db = SQLite.openDatabaseSync('reminders.db');
@@ -35,9 +36,18 @@ export async function initDb() {
       repeats INTEGER NOT NULL DEFAULT 1,
       sortOrder INTEGER NOT NULL DEFAULT 0,
       notificationId TEXT,
-      repeatingNotificationId TEXT
+      repeatingNotificationId TEXT,
+      createdAt TEXT
     );
   `);
+
+  // Non-destructive migration for installs created before createdAt existed: add the column
+  // and backfill it from startDate, the closest approximation available for old rows.
+  const columnsAfterCreate = await db.getAllAsync<{ name: string }>('PRAGMA table_info(reminders)');
+  if (!columnsAfterCreate.some((c) => c.name === 'createdAt')) {
+    await db.execAsync('ALTER TABLE reminders ADD COLUMN createdAt TEXT');
+  }
+  await db.execAsync('UPDATE reminders SET createdAt = startDate WHERE createdAt IS NULL');
 }
 
 export async function getReminders(): Promise<Reminder[]> {
@@ -52,12 +62,13 @@ export async function insertReminder(
   intervalDays: number,
   repeats: boolean,
   notificationId: string | null,
-  repeatingNotificationId: string | null
+  repeatingNotificationId: string | null,
+  createdAt: string
 ): Promise<number> {
   const result = await db.runAsync(
     `INSERT INTO reminders
-      (title, startDate, intervalValue, intervalUnit, intervalDays, repeats, sortOrder, notificationId, repeatingNotificationId)
-     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sortOrder), 0) - 1 FROM reminders), ?, ?)`,
+      (title, startDate, intervalValue, intervalUnit, intervalDays, repeats, sortOrder, notificationId, repeatingNotificationId, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sortOrder), 0) - 1 FROM reminders), ?, ?, ?)`,
     title,
     startDate,
     intervalValue,
@@ -65,7 +76,8 @@ export async function insertReminder(
     intervalDays,
     repeats ? 1 : 0,
     notificationId,
-    repeatingNotificationId
+    repeatingNotificationId,
+    createdAt
   );
   return result.lastInsertRowId;
 }

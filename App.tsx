@@ -94,6 +94,10 @@ function unitLabel(unit: IntervalUnit, value: number): string {
   return `${unit}${value === 1 ? '' : 's'}`;
 }
 
+function repeatLabel(item: Reminder): string {
+  return item.repeats ? `Every ${item.intervalValue} ${unitLabel(item.intervalUnit, item.intervalValue)}` : 'None';
+}
+
 function getDueDate(reminder: Reminder, now: Date): Date {
   const anchor = new Date(reminder.startDate);
   return reminder.repeats
@@ -297,12 +301,14 @@ function ReminderRow({
   item,
   now,
   dragDisabled,
+  onPressDetail,
   onEdit,
   onDelete,
 }: {
   item: Reminder;
   now: Date;
   dragDisabled: boolean;
+  onPressDetail: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -313,6 +319,7 @@ function ReminderRow({
     <View style={[styles.row, isActive && styles.rowActive]}>
       <Pressable
         style={{ flex: 1 }}
+        onPress={onPressDetail}
         onLongPress={dragDisabled ? undefined : drag}
         delayLongPress={200}
       >
@@ -350,6 +357,7 @@ function ReminderApp() {
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<'list' | 'calendar'>('list');
   const [modalVisible, setModalVisible] = useState(false);
+  const [detailReminder, setDetailReminder] = useState<Reminder | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -462,7 +470,8 @@ function ReminderApp() {
         intervalDays,
         repeats,
         notificationId,
-        repeatingNotificationId
+        repeatingNotificationId,
+        new Date().toISOString()
       );
     }
 
@@ -561,6 +570,7 @@ function ReminderApp() {
                 item={item}
                 now={now}
                 dragDisabled={!!query}
+                onPressDetail={() => setDetailReminder(item)}
                 onEdit={() => openEditModal(item)}
                 onDelete={() => handleDelete(item)}
               />
@@ -701,6 +711,43 @@ function ReminderApp() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      <Modal visible={detailReminder !== null} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, styles.modalCardContent, { paddingBottom: insets.bottom + 20 }]}>
+            {detailReminder && (
+              <>
+                <Text style={styles.modalHeader}>{detailReminder.title}</Text>
+
+                <Text style={styles.label}>Starting date and time</Text>
+                <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.startDate))}</Text>
+
+                <Text style={styles.label}>Repetition</Text>
+                <Text style={styles.detailValue}>{repeatLabel(detailReminder)}</Text>
+
+                <Text style={styles.label}>Creation date and time</Text>
+                <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.createdAt))}</Text>
+
+                <View style={styles.modalActions}>
+                  <Pressable style={styles.secondaryButton} onPress={() => setDetailReminder(null)}>
+                    <Text>Close</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.primaryButton}
+                    onPress={() => {
+                      const reminder = detailReminder;
+                      setDetailReminder(null);
+                      openEditModal(reminder);
+                    }}
+                  >
+                    <Text style={styles.primaryButtonText}>Edit</Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -834,6 +881,10 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 12,
     marginBottom: 6,
+  },
+  detailValue: {
+    fontSize: 16,
+    color: '#111',
   },
   input: {
     height: 44,
