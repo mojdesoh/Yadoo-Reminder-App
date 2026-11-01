@@ -393,7 +393,6 @@ function ReminderApp() {
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('day');
   const [repeats, setRepeats] = useState(true);
   const [tagColor, setTagColor] = useState<TagColor | null>(null);
-  const [showTagColorPicker, setShowTagColorPicker] = useState(false);
 
   const loadReminders = useCallback(async () => {
     setReminders(await getReminders());
@@ -719,12 +718,14 @@ function ReminderApp() {
             </View>
 
             <Text style={styles.label}>Tag colour</Text>
-            <Pressable style={styles.input} onPress={() => setShowTagColorPicker(true)}>
-              <View style={styles.tagColorRow}>
-                <TagColorDot hex={tagColorHex(tagColor)} />
-                <Text>{tagColorLabel(tagColor)}</Text>
-              </View>
-            </Pressable>
+            <View style={styles.unitPickerWrapper}>
+              <Picker selectedValue={tagColor} onValueChange={(value) => setTagColor(value)} mode="dropdown" style={styles.unitPicker}>
+                <Picker.Item label="○ None" value={null} color="#888" />
+                {TAG_COLORS.map((option) => (
+                  <Picker.Item key={option.key} label={`● ${option.label}`} value={option.key} color={option.hex} />
+                ))}
+              </Picker>
+            </View>
 
             <View style={styles.modalActions}>
               <Pressable
@@ -788,36 +789,6 @@ function ReminderApp() {
             )}
           </View>
         </View>
-      </Modal>
-
-      <Modal visible={showTagColorPicker} animationType="fade" transparent onRequestClose={() => setShowTagColorPicker(false)}>
-        <Pressable style={styles.tagColorOverlay} onPress={() => setShowTagColorPicker(false)}>
-          <View style={styles.tagColorSheet}>
-            <Pressable
-              style={styles.tagColorOption}
-              onPress={() => {
-                setTagColor(null);
-                setShowTagColorPicker(false);
-              }}
-            >
-              <TagColorDot hex={null} />
-              <Text style={styles.tagColorOptionText}>None</Text>
-            </Pressable>
-            {TAG_COLORS.map((option) => (
-              <Pressable
-                key={option.key}
-                style={styles.tagColorOption}
-                onPress={() => {
-                  setTagColor(option.key);
-                  setShowTagColorPicker(false);
-                }}
-              >
-                <TagColorDot hex={option.hex} />
-                <Text style={styles.tagColorOptionText}>{option.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </Pressable>
       </Modal>
     </View>
   );
@@ -971,29 +942,6 @@ const styles = StyleSheet.create({
   },
   tagColorDotNone: {
     backgroundColor: 'transparent',
-  },
-  tagColorOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tagColorSheet: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingVertical: 8,
-    width: 220,
-  },
-  tagColorOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-  },
-  tagColorOptionText: {
-    fontSize: 16,
-    color: '#111',
   },
   input: {
     height: 44,
