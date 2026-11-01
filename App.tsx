@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Dimensions,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -107,6 +108,10 @@ const TAG_COLORS: { key: TagColor; label: string; hex: string }[] = [
   { key: 'black', label: 'Black', hex: '#000000' },
 ];
 
+const TAG_COLOR_DROPDOWN_ITEM_HEIGHT = 52;
+// +1 for the "None" option, which isn't in TAG_COLORS itself; +16 for the list's own vertical padding.
+const TAG_COLOR_DROPDOWN_HEIGHT = (TAG_COLORS.length + 1) * TAG_COLOR_DROPDOWN_ITEM_HEIGHT + 16;
+
 function tagColorLabel(tagColor: TagColor | null): string {
   return TAG_COLORS.find((c) => c.key === tagColor)?.label ?? 'None';
 }
@@ -115,8 +120,16 @@ function tagColorHex(tagColor: TagColor | null): string | null {
   return TAG_COLORS.find((c) => c.key === tagColor)?.hex ?? null;
 }
 
-function TagColorDot({ hex }: { hex: string | null }) {
-  return <View style={[styles.tagColorDot, hex ? { backgroundColor: hex } : styles.tagColorDotNone]} />;
+function TagColorDot({ hex, size = 22 }: { hex: string | null; size?: number }) {
+  return (
+    <View
+      style={[
+        styles.tagColorDot,
+        { width: size, height: size, borderRadius: size / 2 },
+        hex ? { backgroundColor: hex } : styles.tagColorDotNone,
+      ]}
+    />
+  );
 }
 
 function getDueDate(reminder: Reminder, now: Date): Date {
@@ -393,6 +406,14 @@ function ReminderApp() {
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('day');
   const [repeats, setRepeats] = useState(true);
   const [tagColor, setTagColor] = useState<TagColor | null>(null);
+  const tagColorFieldRef = useRef<View>(null);
+  const [tagColorDropdownOpen, setTagColorDropdownOpen] = useState(false);
+  const [tagColorDropdownLayout, setTagColorDropdownLayout] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
   const loadReminders = useCallback(async () => {
     setReminders(await getReminders());
@@ -718,14 +739,24 @@ function ReminderApp() {
             </View>
 
             <Text style={styles.label}>Tag colour</Text>
-            <View style={styles.unitPickerWrapper}>
-              <Picker selectedValue={tagColor} onValueChange={(value) => setTagColor(value)} mode="dropdown" style={styles.unitPicker}>
-                <Picker.Item label="○ None" value={null} color="#888" />
-                {TAG_COLORS.map((option) => (
-                  <Picker.Item key={option.key} label={`● ${option.label}`} value={option.key} color={option.hex} />
-                ))}
-              </Picker>
-            </View>
+            <Pressable
+              ref={tagColorFieldRef}
+              style={styles.input}
+              onPress={() => {
+                tagColorFieldRef.current?.measureInWindow((x, y, width, height) => {
+                  setTagColorDropdownLayout({ x, y, width, height });
+                  setTagColorDropdownOpen(true);
+                });
+              }}
+            >
+              <View style={styles.tagColorTriggerRow}>
+                <View style={styles.tagColorRow}>
+                  <TagColorDot hex={tagColorHex(tagColor)} />
+                  <Text>{tagColorLabel(tagColor)}</Text>
+                </View>
+                <Ionicons name="chevron-down" size={18} color="#666" />
+              </View>
+            </Pressable>
 
             <View style={styles.modalActions}>
               <Pressable
@@ -746,6 +777,56 @@ function ReminderApp() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={tagColorDropdownOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTagColorDropdownOpen(false)}
+      >
+        <Pressable style={styles.tagColorDropdownBackdrop} onPress={() => setTagColorDropdownOpen(false)}>
+          {tagColorDropdownLayout && (() => {
+            const screenHeight = Dimensions.get('window').height;
+            const spaceBelow = screenHeight - (tagColorDropdownLayout.y + tagColorDropdownLayout.height);
+            const openUpward = spaceBelow < TAG_COLOR_DROPDOWN_HEIGHT;
+            const top = openUpward
+              ? tagColorDropdownLayout.y - TAG_COLOR_DROPDOWN_HEIGHT - 4
+              : tagColorDropdownLayout.y + tagColorDropdownLayout.height + 4;
+            return (
+              <View
+                style={[
+                  styles.tagColorDropdownList,
+                  { left: tagColorDropdownLayout.x, width: tagColorDropdownLayout.width, top },
+                ]}
+              >
+                <Pressable
+                  style={styles.tagColorDropdownItem}
+                  onPress={() => {
+                    setTagColor(null);
+                    setTagColorDropdownOpen(false);
+                  }}
+                >
+                  <TagColorDot hex={null} />
+                  <Text style={styles.tagColorDropdownItemText}>None</Text>
+                </Pressable>
+                {TAG_COLORS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={styles.tagColorDropdownItem}
+                    onPress={() => {
+                      setTagColor(option.key);
+                      setTagColorDropdownOpen(false);
+                    }}
+                  >
+                    <TagColorDot hex={option.hex} />
+                    <Text style={styles.tagColorDropdownItemText}>{option.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            );
+          })()}
+        </Pressable>
       </Modal>
 
       <Modal visible={detailReminder !== null} animationType="slide" transparent>
@@ -934,14 +1015,42 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   tagColorDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#ccc',
   },
   tagColorDotNone: {
     backgroundColor: 'transparent',
+  },
+  tagColorTriggerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  tagColorDropdownBackdrop: {
+    flex: 1,
+  },
+  tagColorDropdownList: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingVertical: 8,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  tagColorDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    height: TAG_COLOR_DROPDOWN_ITEM_HEIGHT,
+  },
+  tagColorDropdownItemText: {
+    fontSize: 16,
+    color: '#111',
   },
   input: {
     height: 44,
