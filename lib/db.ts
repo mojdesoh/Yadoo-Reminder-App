@@ -2,6 +2,8 @@ import * as SQLite from 'expo-sqlite';
 
 export type IntervalUnit = 'day' | 'week' | 'month' | 'year';
 
+export type TagColor = 'red' | 'green' | 'blue' | 'yellow' | 'black';
+
 export type Reminder = {
   id: number;
   title: string;
@@ -14,6 +16,7 @@ export type Reminder = {
   notificationId: string | null; // one-shot notification for the first occurrence
   repeatingNotificationId: string | null; // native repeating notification for every occurrence after that (null when repeats = 0)
   createdAt: string; // ISO datetime the reminder was first created; never changes on edit
+  tagColor: TagColor | null; // at most one tag colour per reminder; null means "none", the default
 };
 
 const db = SQLite.openDatabaseSync('reminders.db');
@@ -37,7 +40,8 @@ export async function initDb() {
       sortOrder INTEGER NOT NULL DEFAULT 0,
       notificationId TEXT,
       repeatingNotificationId TEXT,
-      createdAt TEXT
+      createdAt TEXT,
+      tagColor TEXT
     );
   `);
 
@@ -48,6 +52,12 @@ export async function initDb() {
     await db.execAsync('ALTER TABLE reminders ADD COLUMN createdAt TEXT');
   }
   await db.execAsync('UPDATE reminders SET createdAt = startDate WHERE createdAt IS NULL');
+
+  // tagColor is nullable with no backfill needed — NULL ("no tag colour") is already the
+  // correct value for every reminder that existed before this column did.
+  if (!columnsAfterCreate.some((c) => c.name === 'tagColor')) {
+    await db.execAsync('ALTER TABLE reminders ADD COLUMN tagColor TEXT');
+  }
 }
 
 export async function getReminders(): Promise<Reminder[]> {
@@ -63,12 +73,13 @@ export async function insertReminder(
   repeats: boolean,
   notificationId: string | null,
   repeatingNotificationId: string | null,
-  createdAt: string
+  createdAt: string,
+  tagColor: TagColor | null
 ): Promise<number> {
   const result = await db.runAsync(
     `INSERT INTO reminders
-      (title, startDate, intervalValue, intervalUnit, intervalDays, repeats, sortOrder, notificationId, repeatingNotificationId, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sortOrder), 0) - 1 FROM reminders), ?, ?, ?)`,
+      (title, startDate, intervalValue, intervalUnit, intervalDays, repeats, sortOrder, notificationId, repeatingNotificationId, createdAt, tagColor)
+     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sortOrder), 0) - 1 FROM reminders), ?, ?, ?, ?)`,
     title,
     startDate,
     intervalValue,
@@ -77,7 +88,8 @@ export async function insertReminder(
     repeats ? 1 : 0,
     notificationId,
     repeatingNotificationId,
-    createdAt
+    createdAt,
+    tagColor
   );
   return result.lastInsertRowId;
 }
@@ -91,10 +103,11 @@ export async function updateReminder(
   intervalDays: number,
   repeats: boolean,
   notificationId: string | null,
-  repeatingNotificationId: string | null
+  repeatingNotificationId: string | null,
+  tagColor: TagColor | null
 ) {
   await db.runAsync(
-    'UPDATE reminders SET title = ?, startDate = ?, intervalValue = ?, intervalUnit = ?, intervalDays = ?, repeats = ?, notificationId = ?, repeatingNotificationId = ? WHERE id = ?',
+    'UPDATE reminders SET title = ?, startDate = ?, intervalValue = ?, intervalUnit = ?, intervalDays = ?, repeats = ?, notificationId = ?, repeatingNotificationId = ?, tagColor = ? WHERE id = ?',
     title,
     startDate,
     intervalValue,
@@ -103,6 +116,7 @@ export async function updateReminder(
     repeats ? 1 : 0,
     notificationId,
     repeatingNotificationId,
+    tagColor,
     id
   );
 }

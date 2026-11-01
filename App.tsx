@@ -33,6 +33,7 @@ import {
 import {
   IntervalUnit,
   Reminder,
+  TagColor,
   deleteReminder,
   getReminders,
   initDb,
@@ -96,6 +97,26 @@ function unitLabel(unit: IntervalUnit, value: number): string {
 
 function repeatLabel(item: Reminder): string {
   return item.repeats ? `Every ${item.intervalValue} ${unitLabel(item.intervalUnit, item.intervalValue)}` : 'None';
+}
+
+const TAG_COLORS: { key: TagColor; label: string; hex: string }[] = [
+  { key: 'red', label: 'Red', hex: '#e53935' },
+  { key: 'green', label: 'Green', hex: '#43a047' },
+  { key: 'blue', label: 'Blue', hex: '#1e88e5' },
+  { key: 'yellow', label: 'Yellow', hex: '#fdd835' },
+  { key: 'black', label: 'Black', hex: '#000000' },
+];
+
+function tagColorLabel(tagColor: TagColor | null): string {
+  return TAG_COLORS.find((c) => c.key === tagColor)?.label ?? 'None';
+}
+
+function tagColorHex(tagColor: TagColor | null): string | null {
+  return TAG_COLORS.find((c) => c.key === tagColor)?.hex ?? null;
+}
+
+function TagColorDot({ hex }: { hex: string | null }) {
+  return <View style={[styles.tagColorDot, hex ? { backgroundColor: hex } : styles.tagColorDotNone]} />;
 }
 
 function getDueDate(reminder: Reminder, now: Date): Date {
@@ -371,6 +392,8 @@ function ReminderApp() {
   const [intervalValueError, setIntervalValueError] = useState(false);
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('day');
   const [repeats, setRepeats] = useState(true);
+  const [tagColor, setTagColor] = useState<TagColor | null>(null);
+  const [showTagColorPicker, setShowTagColorPicker] = useState(false);
 
   const loadReminders = useCallback(async () => {
     setReminders(await getReminders());
@@ -395,6 +418,7 @@ function ReminderApp() {
     setIntervalValueError(false);
     setIntervalUnit('day');
     setRepeats(true);
+    setTagColor(null);
   }
 
   function openAddModal() {
@@ -413,6 +437,7 @@ function ReminderApp() {
     setIntervalValueError(false);
     setIntervalUnit(reminder.intervalUnit);
     setRepeats(!!reminder.repeats);
+    setTagColor(reminder.tagColor);
     setEditingId(reminder.id);
     setModalVisible(true);
   }
@@ -453,7 +478,8 @@ function ReminderApp() {
         intervalDays,
         repeats,
         notificationId,
-        repeatingNotificationId
+        repeatingNotificationId,
+        tagColor
       );
     } else {
       const { notificationId, repeatingNotificationId } = await scheduleReminderNotifications(
@@ -471,7 +497,8 @@ function ReminderApp() {
         repeats,
         notificationId,
         repeatingNotificationId,
-        new Date().toISOString()
+        new Date().toISOString(),
+        tagColor
       );
     }
 
@@ -691,6 +718,14 @@ function ReminderApp() {
               </View>
             </View>
 
+            <Text style={styles.label}>Tag colour</Text>
+            <Pressable style={styles.input} onPress={() => setShowTagColorPicker(true)}>
+              <View style={styles.tagColorRow}>
+                <TagColorDot hex={tagColorHex(tagColor)} />
+                <Text>{tagColorLabel(tagColor)}</Text>
+              </View>
+            </Pressable>
+
             <View style={styles.modalActions}>
               <Pressable
                 style={styles.secondaryButton}
@@ -728,6 +763,12 @@ function ReminderApp() {
                 <Text style={styles.label}>Creation date and time</Text>
                 <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.createdAt))}</Text>
 
+                <Text style={styles.label}>Tag colour</Text>
+                <View style={styles.tagColorRow}>
+                  <TagColorDot hex={tagColorHex(detailReminder.tagColor)} />
+                  <Text style={styles.detailValue}>{tagColorLabel(detailReminder.tagColor)}</Text>
+                </View>
+
                 <View style={styles.modalActions}>
                   <Pressable style={styles.secondaryButton} onPress={() => setDetailReminder(null)}>
                     <Text>Close</Text>
@@ -747,6 +788,36 @@ function ReminderApp() {
             )}
           </View>
         </View>
+      </Modal>
+
+      <Modal visible={showTagColorPicker} animationType="fade" transparent onRequestClose={() => setShowTagColorPicker(false)}>
+        <Pressable style={styles.tagColorOverlay} onPress={() => setShowTagColorPicker(false)}>
+          <View style={styles.tagColorSheet}>
+            <Pressable
+              style={styles.tagColorOption}
+              onPress={() => {
+                setTagColor(null);
+                setShowTagColorPicker(false);
+              }}
+            >
+              <TagColorDot hex={null} />
+              <Text style={styles.tagColorOptionText}>None</Text>
+            </Pressable>
+            {TAG_COLORS.map((option) => (
+              <Pressable
+                key={option.key}
+                style={styles.tagColorOption}
+                onPress={() => {
+                  setTagColor(option.key);
+                  setShowTagColorPicker(false);
+                }}
+              >
+                <TagColorDot hex={option.hex} />
+                <Text style={styles.tagColorOptionText}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -883,6 +954,44 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   detailValue: {
+    fontSize: 16,
+    color: '#111',
+  },
+  tagColorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  tagColorDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ccc',
+  },
+  tagColorDotNone: {
+    backgroundColor: 'transparent',
+  },
+  tagColorOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tagColorSheet: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 8,
+    width: 220,
+  },
+  tagColorOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  tagColorOptionText: {
     fontSize: 16,
     color: '#111',
   },
