@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Dimensions,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -33,6 +34,7 @@ import {
 import {
   IntervalUnit,
   Reminder,
+  TagColor,
   deleteReminder,
   getReminders,
   initDb,
@@ -94,6 +96,74 @@ function unitLabel(unit: IntervalUnit, value: number): string {
   return `${unit}${value === 1 ? '' : 's'}`;
 }
 
+function repeatLabel(item: Reminder): string {
+  return item.repeats ? `Every ${item.intervalValue} ${unitLabel(item.intervalUnit, item.intervalValue)}` : 'None';
+}
+
+const TAG_COLORS: { key: TagColor; label: string; hex: string }[] = [
+  { key: 'red', label: 'Red', hex: '#e53935' },
+  { key: 'green', label: 'Green', hex: '#43a047' },
+  { key: 'blue', label: 'Blue', hex: '#1e88e5' },
+  { key: 'yellow', label: 'Yellow', hex: '#fdd835' },
+  { key: 'black', label: 'Black', hex: '#000000' },
+];
+
+const TAG_COLOR_DROPDOWN_ITEM_HEIGHT = 52;
+// +1 for the "None" option, which isn't in TAG_COLORS itself; +16 for the list's own vertical padding.
+const TAG_COLOR_DROPDOWN_HEIGHT = (TAG_COLORS.length + 1) * TAG_COLOR_DROPDOWN_ITEM_HEIGHT + 16;
+
+function tagColorLabel(tagColor: TagColor | null): string {
+  return TAG_COLORS.find((c) => c.key === tagColor)?.label ?? 'None';
+}
+
+function tagColorHex(tagColor: TagColor | null): string | null {
+  return TAG_COLORS.find((c) => c.key === tagColor)?.hex ?? null;
+}
+
+function TagColorDot({ hex, size = 22 }: { hex: string | null; size?: number }) {
+  return (
+    <View
+      style={[
+        styles.tagColorDot,
+        { width: size, height: size, borderRadius: size / 2 },
+        hex ? { backgroundColor: hex } : styles.tagColorDotNone,
+      ]}
+    />
+  );
+}
+
+// A circle split into equal vertical stripes, one per distinct tag colour present — built from
+// plain Views (a row of flex siblings clipped by the circular container) rather than a charting
+// or SVG library, since this is the only place that needs anything beyond a flat-filled circle.
+function MultiColorDot({ hexes, size = 10 }: { hexes: string[]; size?: number }) {
+  return (
+    <View style={[styles.tagColorDot, styles.multiColorDot, { width: size, height: size, borderRadius: size / 2 }]}>
+      {hexes.map((hex, index) => (
+        <View key={index} style={{ flex: 1, backgroundColor: hex }} />
+      ))}
+    </View>
+  );
+}
+
+type DayColorIndicator =
+  | { kind: 'none' }
+  | { kind: 'empty' }
+  | { kind: 'solid'; hex: string }
+  | { kind: 'multi'; hexes: string[] };
+
+// The day-cell dot's colour is derived purely from the distinct tag colours among that day's
+// occurrences: no occurrences at all → nothing shown; occurrences but none tagged → an empty
+// ring; every tagged occurrence shares one colour (any mix of that colour and untagged ones
+// included) → a circle in that colour; two or more different colours present → split/striped.
+function dayColorIndicator(occurrences: Occurrence[] | undefined): DayColorIndicator {
+  if (!occurrences || occurrences.length === 0) return { kind: 'none' };
+  const present = new Set(occurrences.map((o) => o.reminder.tagColor));
+  const distinctColors = TAG_COLORS.filter((c) => present.has(c.key));
+  if (distinctColors.length === 0) return { kind: 'empty' };
+  if (distinctColors.length === 1) return { kind: 'solid', hex: distinctColors[0].hex };
+  return { kind: 'multi', hexes: distinctColors.map((c) => c.hex) };
+}
+
 function getDueDate(reminder: Reminder, now: Date): Date {
   const anchor = new Date(reminder.startDate);
   return reminder.repeats
@@ -101,16 +171,210 @@ function getDueDate(reminder: Reminder, now: Date): Date {
     : anchor;
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function dateKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function isSameDay(a: Date, b: Date): boolean {
+  return dateKey(a) === dateKey(b);
+}
+
+type Occurrence = { reminder: Reminder; date: Date };
+
+// Reminders don't store their occurrences — every occurrence in a date range is derived by
+// walking forward from the reminder's anchor date in steps of intervalDays. Since that walk
+// only ever moves forward from the anchor, a reminder created partway through a month (e.g.
+// "pay rent" set up on Aug 15 for the 29th) can never produce an occurrence before Aug 29,
+// even though later months show one every time around.
+function getOccurrencesInRange(reminders: Reminder[], rangeStart: Date, rangeEnd: Date): Occurrence[] {
+  const occurrences: Occurrence[] = [];
+  for (const reminder of reminders) {
+    const anchor = new Date(reminder.startDate);
+    if (!reminder.repeats) {
+      if (anchor >= rangeStart && anchor < rangeEnd) occurrences.push({ reminder, date: anchor });
+      continue;
+    }
+    const intervalMs = reminder.intervalDays * MS_PER_DAY;
+    if (intervalMs <= 0 || anchor >= rangeEnd) continue;
+
+    let step = anchor < rangeStart ? Math.ceil((rangeStart.getTime() - anchor.getTime()) / intervalMs) : 0;
+    let candidate = new Date(anchor.getTime() + step * intervalMs);
+    while (candidate < rangeEnd) {
+      if (candidate >= rangeStart) occurrences.push({ reminder, date: candidate });
+      step += 1;
+      candidate = new Date(anchor.getTime() + step * intervalMs);
+    }
+  }
+  return occurrences.sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+function CalendarView({ reminders, now }: { reminders: Reminder[]; now: Date }) {
+  const today = startOfDay(now);
+  const [mode, setMode] = useState<'days' | 'months'>('days');
+  const [viewedYear, setViewedYear] = useState(today.getFullYear());
+  const [viewedMonth, setViewedMonth] = useState(today.getMonth());
+  const [selectedDate, setSelectedDate] = useState(today);
+
+  const gridStart = useMemo(() => {
+    const firstOfMonth = new Date(viewedYear, viewedMonth, 1);
+    return new Date(viewedYear, viewedMonth, 1 - firstOfMonth.getDay());
+  }, [viewedYear, viewedMonth]);
+
+  const gridDays = useMemo(
+    () => Array.from({ length: 42 }, (_, i) => new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i)),
+    [gridStart]
+  );
+
+  const occurrencesByDay = useMemo(() => {
+    const rangeEnd = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + 42);
+    const map = new Map<string, Occurrence[]>();
+    for (const occurrence of getOccurrencesInRange(reminders, gridStart, rangeEnd)) {
+      const key = dateKey(occurrence.date);
+      const existing = map.get(key);
+      if (existing) existing.push(occurrence);
+      else map.set(key, [occurrence]);
+    }
+    return map;
+  }, [reminders, gridStart]);
+
+  function goPrev() {
+    if (mode === 'months') {
+      setViewedYear((y) => y - 1);
+    } else if (viewedMonth === 0) {
+      setViewedMonth(11);
+      setViewedYear((y) => y - 1);
+    } else {
+      setViewedMonth((m) => m - 1);
+    }
+  }
+
+  function goNext() {
+    if (mode === 'months') {
+      setViewedYear((y) => y + 1);
+    } else if (viewedMonth === 11) {
+      setViewedMonth(0);
+      setViewedYear((y) => y + 1);
+    } else {
+      setViewedMonth((m) => m + 1);
+    }
+  }
+
+  const selectedOccurrences = occurrencesByDay.get(dateKey(selectedDate)) ?? [];
+
+  return (
+    <View style={styles.calendarContainer}>
+      <View style={styles.calendarHeaderRow}>
+        <Pressable onPress={goPrev} hitSlop={12} style={styles.calendarNavButton}>
+          <Ionicons name="chevron-back" size={22} color="#2f6fed" />
+        </Pressable>
+        <Pressable onPress={() => setMode(mode === 'days' ? 'months' : 'days')}>
+          <Text style={styles.calendarHeaderTitle}>
+            {mode === 'days' ? `${MONTH_NAMES[viewedMonth]} ${viewedYear}` : String(viewedYear)}
+          </Text>
+        </Pressable>
+        <Pressable onPress={goNext} hitSlop={12} style={styles.calendarNavButton}>
+          <Ionicons name="chevron-forward" size={22} color="#2f6fed" />
+        </Pressable>
+      </View>
+
+      {mode === 'months' ? (
+        <View style={styles.monthGrid}>
+          {MONTH_NAMES.map((name, index) => (
+            <Pressable
+              key={name}
+              style={[styles.monthCell, index === viewedMonth && styles.monthCellSelected]}
+              onPress={() => {
+                setViewedMonth(index);
+                setMode('days');
+              }}
+            >
+              <Text style={[styles.monthCellText, index === viewedMonth && styles.monthCellTextSelected]}>
+                {name.slice(0, 3)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        <>
+          <View style={styles.weekDaysRow}>
+            {WEEKDAY_LABELS.map((label, index) => (
+              <Text key={index} style={styles.weekDayLabel}>{label}</Text>
+            ))}
+          </View>
+          <View style={styles.dayGrid}>
+            {gridDays.map((day) => {
+              const inMonth = day.getMonth() === viewedMonth;
+              const isToday = isSameDay(day, today);
+              const isSelected = isSameDay(day, selectedDate);
+              const dayOccurrences = occurrencesByDay.get(dateKey(day));
+              const indicator = dayColorIndicator(dayOccurrences);
+              return (
+                <Pressable
+                  key={dateKey(day)}
+                  style={[styles.dayCell, isSelected && styles.dayCellSelected]}
+                  onPress={() => setSelectedDate(day)}
+                >
+                  <View style={[styles.dayNumberWrap, isToday && styles.dayNumberWrapToday]}>
+                    <Text
+                      style={[
+                        styles.dayNumberText,
+                        !inMonth && styles.dayNumberTextOutside,
+                        isToday && styles.dayNumberTextToday,
+                      ]}
+                    >
+                      {day.getDate()}
+                    </Text>
+                  </View>
+                  {indicator.kind === 'empty' && <View style={styles.dayDotEmpty} />}
+                  {indicator.kind === 'solid' && <View style={[styles.dayDot, { backgroundColor: indicator.hex }]} />}
+                  {indicator.kind === 'multi' && <MultiColorDot hexes={indicator.hexes} size={10} />}
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      )}
+
+      {mode === 'days' && (
+        <View style={styles.selectedDayPanel}>
+          <Text style={styles.selectedDayHeader}>
+            {selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+          </Text>
+          {selectedOccurrences.length === 0 ? (
+            <Text style={styles.empty}>No reminders on this day.</Text>
+          ) : (
+            selectedOccurrences.map((occurrence, index) => (
+              <View key={`${occurrence.reminder.id}-${index}`} style={styles.occurrenceRow}>
+                <Text style={styles.occurrenceTitle}>{occurrence.reminder.title}</Text>
+                <Text style={styles.occurrenceTime}>{formatTime(occurrence.date)}</Text>
+              </View>
+            ))
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
 function ReminderRow({
   item,
   now,
   dragDisabled,
+  onPressDetail,
   onEdit,
   onDelete,
 }: {
   item: Reminder;
   now: Date;
   dragDisabled: boolean;
+  onPressDetail: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -121,6 +385,7 @@ function ReminderRow({
     <View style={[styles.row, isActive && styles.rowActive]}>
       <Pressable
         style={{ flex: 1 }}
+        onPress={onPressDetail}
         onLongPress={dragDisabled ? undefined : drag}
         delayLongPress={200}
       >
@@ -156,18 +421,31 @@ function ReminderApp() {
   const insets = useSafeAreaInsets();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [ready, setReady] = useState(false);
+  const [view, setView] = useState<'list' | 'calendar'>('list');
   const [modalVisible, setModalVisible] = useState(false);
+  const [detailReminder, setDetailReminder] = useState<Reminder | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   const [title, setTitle] = useState('');
+  const [titleError, setTitleError] = useState(false);
   const [startDate, setStartDate] = useState(startOfDay(new Date()));
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [notificationTime, setNotificationTime] = useState(defaultNotificationTime());
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [intervalValue, setIntervalValue] = useState('7');
+  const [intervalValueError, setIntervalValueError] = useState(false);
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('day');
   const [repeats, setRepeats] = useState(true);
+  const [tagColor, setTagColor] = useState<TagColor | null>(null);
+  const tagColorFieldRef = useRef<View>(null);
+  const [tagColorDropdownOpen, setTagColorDropdownOpen] = useState(false);
+  const [tagColorDropdownLayout, setTagColorDropdownLayout] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
   const loadReminders = useCallback(async () => {
     setReminders(await getReminders());
@@ -185,11 +463,14 @@ function ReminderApp() {
 
   function resetForm() {
     setTitle('');
+    setTitleError(false);
     setStartDate(startOfDay(new Date()));
     setNotificationTime(defaultNotificationTime());
     setIntervalValue('7');
+    setIntervalValueError(false);
     setIntervalUnit('day');
     setRepeats(true);
+    setTagColor(null);
   }
 
   function openAddModal() {
@@ -201,11 +482,14 @@ function ReminderApp() {
   function openEditModal(reminder: Reminder) {
     const anchor = new Date(reminder.startDate);
     setTitle(reminder.title);
+    setTitleError(false);
     setStartDate(startOfDay(anchor));
     setNotificationTime(anchor);
     setIntervalValue(String(reminder.intervalValue));
+    setIntervalValueError(false);
     setIntervalUnit(reminder.intervalUnit);
     setRepeats(!!reminder.repeats);
+    setTagColor(reminder.tagColor);
     setEditingId(reminder.id);
     setModalVisible(true);
   }
@@ -213,7 +497,12 @@ function ReminderApp() {
   async function handleSubmit() {
     const parsedValue = parseInt(intervalValue, 10);
     const value = repeats ? parsedValue : Number.isFinite(parsedValue) && parsedValue >= 1 ? parsedValue : 1;
-    if (!title.trim() || (repeats && (!Number.isFinite(value) || value < 1))) return;
+
+    const isTitleInvalid = !title.trim();
+    const isIntervalValueInvalid = repeats && (!Number.isFinite(value) || value < 1);
+    setTitleError(isTitleInvalid);
+    setIntervalValueError(isIntervalValueInvalid);
+    if (isTitleInvalid || isIntervalValueInvalid) return;
 
     const intervalDays = value * UNIT_TO_DAYS[intervalUnit];
     const anchor = combineDateAndTime(startDate, notificationTime);
@@ -241,7 +530,8 @@ function ReminderApp() {
         intervalDays,
         repeats,
         notificationId,
-        repeatingNotificationId
+        repeatingNotificationId,
+        tagColor
       );
     } else {
       const { notificationId, repeatingNotificationId } = await scheduleReminderNotifications(
@@ -258,7 +548,9 @@ function ReminderApp() {
         intervalDays,
         repeats,
         notificationId,
-        repeatingNotificationId
+        repeatingNotificationId,
+        new Date().toISOString(),
+        tagColor
       );
     }
 
@@ -312,47 +604,63 @@ function ReminderApp() {
   return (
     <View style={styles.container}>
       <StatusBar style="auto" />
-      <Text style={styles.header}>Reminders</Text>
-
-      <View style={styles.searchRow}>
-        <TextInput
-          style={styles.searchInput}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search reminders"
-          returnKeyType="search"
-          onSubmitEditing={() => Keyboard.dismiss()}
-        />
-        <Pressable style={styles.searchButton} onPress={() => Keyboard.dismiss()}>
-          <Text style={styles.searchButtonText}>Search</Text>
+      <View style={styles.topRow}>
+        <Text style={styles.header}>{view === 'list' ? 'Reminders' : 'Calendar'}</Text>
+        <Pressable
+          onPress={() => setView(view === 'list' ? 'calendar' : 'list')}
+          hitSlop={12}
+          style={styles.calendarToggle}
+        >
+          <Ionicons name={view === 'list' ? 'calendar-outline' : 'list-outline'} size={26} color="#2f6fed" />
         </Pressable>
       </View>
 
-      <ReorderableList
-        style={styles.list}
-        data={visibleReminders}
-        keyExtractor={(item) => String(item.id)}
-        onReorder={handleReorder}
-        shouldUpdateActiveItem
-        ListEmptyComponent={
-          <Text style={styles.empty}>
-            {query ? `No reminders match "${searchQuery.trim()}".` : 'No reminders yet. Tap + to add one.'}
-          </Text>
-        }
-        renderItem={({ item }: ListRenderItemInfo<Reminder>) => (
-          <ReminderRow
-            item={item}
-            now={now}
-            dragDisabled={!!query}
-            onEdit={() => openEditModal(item)}
-            onDelete={() => handleDelete(item)}
-          />
-        )}
-      />
+      {view === 'calendar' ? (
+        <CalendarView reminders={reminders} now={now} />
+      ) : (
+        <>
+          <View style={styles.searchRow}>
+            <TextInput
+              style={styles.searchInput}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search reminders"
+              returnKeyType="search"
+              onSubmitEditing={() => Keyboard.dismiss()}
+            />
+            <Pressable style={styles.searchButton} onPress={() => Keyboard.dismiss()}>
+              <Text style={styles.searchButtonText}>Search</Text>
+            </Pressable>
+          </View>
 
-      <Pressable style={styles.fab} onPress={openAddModal}>
-        <Text style={styles.fabText}>+</Text>
-      </Pressable>
+          <ReorderableList
+            style={styles.list}
+            data={visibleReminders}
+            keyExtractor={(item) => String(item.id)}
+            onReorder={handleReorder}
+            shouldUpdateActiveItem
+            ListEmptyComponent={
+              <Text style={styles.empty}>
+                {query ? `No reminders match "${searchQuery.trim()}".` : 'No reminders yet. Tap + to add one.'}
+              </Text>
+            }
+            renderItem={({ item }: ListRenderItemInfo<Reminder>) => (
+              <ReminderRow
+                item={item}
+                now={now}
+                dragDisabled={!!query}
+                onPressDetail={() => setDetailReminder(item)}
+                onEdit={() => openEditModal(item)}
+                onDelete={() => handleDelete(item)}
+              />
+            )}
+          />
+
+          <Pressable style={styles.fab} onPress={openAddModal}>
+            <Text style={styles.fabText}>+</Text>
+          </Pressable>
+        </>
+      )}
 
       <Modal visible={modalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView
@@ -370,9 +678,12 @@ function ReminderApp() {
 
             <Text style={styles.label}>Title</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, titleError && styles.inputError]}
               value={title}
-              onChangeText={setTitle}
+              onChangeText={(text) => {
+                setTitle(text);
+                if (text.trim()) setTitleError(false);
+              }}
               placeholder="e.g. Linda's Birthday"
             />
 
@@ -414,14 +725,29 @@ function ReminderApp() {
               <Text style={styles.label}>Repeat every</Text>
               <View style={styles.happensOnceRow}>
                 <Text style={styles.happensOnceLabel}>Happens once</Text>
-                <Switch value={!repeats} onValueChange={(value) => setRepeats(!value)} />
+                <Switch
+                  value={!repeats}
+                  onValueChange={(value) => {
+                    setRepeats(!value);
+                    if (value) setIntervalValueError(false);
+                  }}
+                />
               </View>
             </View>
             <View style={styles.intervalRow}>
               <TextInput
-                style={[styles.input, styles.intervalValueInput, !repeats && styles.inputDisabled]}
+                style={[
+                  styles.input,
+                  styles.intervalValueInput,
+                  !repeats && styles.inputDisabled,
+                  intervalValueError && styles.inputError,
+                ]}
                 value={intervalValue}
-                onChangeText={(text) => setIntervalValue(text.replace(/[^0-9]/g, ''))}
+                onChangeText={(text) => {
+                  const digitsOnly = text.replace(/[^0-9]/g, '');
+                  setIntervalValue(digitsOnly);
+                  if (digitsOnly && parseInt(digitsOnly, 10) >= 1) setIntervalValueError(false);
+                }}
                 keyboardType="number-pad"
                 editable={repeats}
               />
@@ -444,6 +770,26 @@ function ReminderApp() {
               </View>
             </View>
 
+            <Text style={styles.label}>Tag colour</Text>
+            <Pressable
+              ref={tagColorFieldRef}
+              style={styles.input}
+              onPress={() => {
+                tagColorFieldRef.current?.measureInWindow((x, y, width, height) => {
+                  setTagColorDropdownLayout({ x, y, width, height });
+                  setTagColorDropdownOpen(true);
+                });
+              }}
+            >
+              <View style={styles.tagColorTriggerRow}>
+                <View style={styles.tagColorRow}>
+                  <TagColorDot hex={tagColorHex(tagColor)} />
+                  <Text>{tagColorLabel(tagColor)}</Text>
+                </View>
+                <Ionicons name="chevron-down" size={18} color="#666" />
+              </View>
+            </Pressable>
+
             <View style={styles.modalActions}>
               <Pressable
                 style={styles.secondaryButton}
@@ -464,6 +810,99 @@ function ReminderApp() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      <Modal
+        visible={tagColorDropdownOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTagColorDropdownOpen(false)}
+      >
+        <Pressable style={styles.tagColorDropdownBackdrop} onPress={() => setTagColorDropdownOpen(false)}>
+          {tagColorDropdownLayout && (() => {
+            const screenHeight = Dimensions.get('window').height;
+            const spaceBelow = screenHeight - (tagColorDropdownLayout.y + tagColorDropdownLayout.height);
+            const openUpward = spaceBelow < TAG_COLOR_DROPDOWN_HEIGHT;
+            const top = openUpward
+              ? tagColorDropdownLayout.y - TAG_COLOR_DROPDOWN_HEIGHT - 4
+              : tagColorDropdownLayout.y + tagColorDropdownLayout.height + 4;
+            return (
+              <View
+                style={[
+                  styles.tagColorDropdownList,
+                  { left: tagColorDropdownLayout.x, width: tagColorDropdownLayout.width, top },
+                ]}
+              >
+                <Pressable
+                  style={styles.tagColorDropdownItem}
+                  onPress={() => {
+                    setTagColor(null);
+                    setTagColorDropdownOpen(false);
+                  }}
+                >
+                  <TagColorDot hex={null} />
+                  <Text style={styles.tagColorDropdownItemText}>None</Text>
+                </Pressable>
+                {TAG_COLORS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={styles.tagColorDropdownItem}
+                    onPress={() => {
+                      setTagColor(option.key);
+                      setTagColorDropdownOpen(false);
+                    }}
+                  >
+                    <TagColorDot hex={option.hex} />
+                    <Text style={styles.tagColorDropdownItemText}>{option.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            );
+          })()}
+        </Pressable>
+      </Modal>
+
+      <Modal visible={detailReminder !== null} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, styles.modalCardContent, { paddingBottom: insets.bottom + 20 }]}>
+            {detailReminder && (
+              <>
+                <Text style={styles.modalHeader}>{detailReminder.title}</Text>
+
+                <Text style={styles.label}>Starting date and time</Text>
+                <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.startDate))}</Text>
+
+                <Text style={styles.label}>Repetition</Text>
+                <Text style={styles.detailValue}>{repeatLabel(detailReminder)}</Text>
+
+                <Text style={styles.label}>Creation date and time</Text>
+                <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.createdAt))}</Text>
+
+                <Text style={styles.label}>Tag colour</Text>
+                <View style={styles.tagColorRow}>
+                  <TagColorDot hex={tagColorHex(detailReminder.tagColor)} />
+                  <Text style={styles.detailValue}>{tagColorLabel(detailReminder.tagColor)}</Text>
+                </View>
+
+                <View style={styles.modalActions}>
+                  <Pressable style={styles.secondaryButton} onPress={() => setDetailReminder(null)}>
+                    <Text>Close</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.primaryButton}
+                    onPress={() => {
+                      const reminder = detailReminder;
+                      setDetailReminder(null);
+                      openEditModal(reminder);
+                    }}
+                  >
+                    <Text style={styles.primaryButtonText}>Edit</Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -475,10 +914,18 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingHorizontal: 20,
   },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
   header: {
     fontSize: 28,
     fontWeight: '700',
-    marginBottom: 16,
+  },
+  calendarToggle: {
+    padding: 4,
   },
   searchRow: {
     flexDirection: 'row',
@@ -590,6 +1037,53 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 6,
   },
+  detailValue: {
+    fontSize: 16,
+    color: '#111',
+  },
+  tagColorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  tagColorDot: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+  },
+  tagColorDotNone: {
+    backgroundColor: 'transparent',
+  },
+  tagColorTriggerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  tagColorDropdownBackdrop: {
+    flex: 1,
+  },
+  tagColorDropdownList: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingVertical: 8,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  tagColorDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    height: TAG_COLOR_DROPDOWN_ITEM_HEIGHT,
+  },
+  tagColorDropdownItemText: {
+    fontSize: 16,
+    color: '#111',
+  },
   input: {
     height: 44,
     borderWidth: StyleSheet.hairlineWidth,
@@ -601,6 +1095,10 @@ const styles = StyleSheet.create({
   },
   inputDisabled: {
     opacity: 0.4,
+  },
+  inputError: {
+    borderWidth: 1.5,
+    borderColor: '#d32f2f',
   },
   repeatHeaderRow: {
     flexDirection: 'row',
@@ -659,5 +1157,139 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: '#fff',
     fontWeight: '600',
+  },
+  calendarContainer: {
+    flex: 1,
+  },
+  calendarHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 24,
+    marginBottom: 12,
+  },
+  calendarNavButton: {
+    padding: 6,
+  },
+  calendarHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    minWidth: 160,
+    textAlign: 'center',
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  monthCell: {
+    width: '33.33%',
+    aspectRatio: 1.6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthCellSelected: {
+    backgroundColor: '#eef3ff',
+    borderRadius: 10,
+  },
+  monthCellText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  monthCellTextSelected: {
+    color: '#2f6fed',
+    fontWeight: '700',
+  },
+  weekDaysRow: {
+    flexDirection: 'row',
+  },
+  weekDayLabel: {
+    width: `${100 / 7}%`,
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#888',
+    marginBottom: 4,
+  },
+  dayGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayCellSelected: {
+    backgroundColor: '#eef3ff',
+    borderRadius: 10,
+  },
+  dayNumberWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayNumberWrapToday: {
+    backgroundColor: '#2f6fed',
+  },
+  dayNumberText: {
+    fontSize: 15,
+    color: '#333',
+  },
+  dayNumberTextOutside: {
+    color: '#ccc',
+  },
+  dayNumberTextToday: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  dayDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 3,
+  },
+  dayDotEmpty: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 3,
+    borderWidth: 1,
+    borderColor: '#999',
+    backgroundColor: 'transparent',
+  },
+  multiColorDot: {
+    flexDirection: 'row',
+    overflow: 'hidden',
+    marginTop: 3,
+  },
+  selectedDayPanel: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#ddd',
+  },
+  selectedDayHeader: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  occurrenceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eee',
+  },
+  occurrenceTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
+  occurrenceTime: {
+    fontSize: 14,
+    color: '#666',
   },
 });
