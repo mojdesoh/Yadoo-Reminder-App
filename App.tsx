@@ -132,6 +132,38 @@ function TagColorDot({ hex, size = 22 }: { hex: string | null; size?: number }) 
   );
 }
 
+// A circle split into equal vertical stripes, one per distinct tag colour present — built from
+// plain Views (a row of flex siblings clipped by the circular container) rather than a charting
+// or SVG library, since this is the only place that needs anything beyond a flat-filled circle.
+function MultiColorDot({ hexes, size = 10 }: { hexes: string[]; size?: number }) {
+  return (
+    <View style={[styles.tagColorDot, styles.multiColorDot, { width: size, height: size, borderRadius: size / 2 }]}>
+      {hexes.map((hex, index) => (
+        <View key={index} style={{ flex: 1, backgroundColor: hex }} />
+      ))}
+    </View>
+  );
+}
+
+type DayColorIndicator =
+  | { kind: 'none' }
+  | { kind: 'empty' }
+  | { kind: 'solid'; hex: string }
+  | { kind: 'multi'; hexes: string[] };
+
+// The day-cell dot's colour is derived purely from the distinct tag colours among that day's
+// occurrences: no occurrences at all → nothing shown; occurrences but none tagged → an empty
+// ring; every tagged occurrence shares one colour (any mix of that colour and untagged ones
+// included) → a circle in that colour; two or more different colours present → split/striped.
+function dayColorIndicator(occurrences: Occurrence[] | undefined): DayColorIndicator {
+  if (!occurrences || occurrences.length === 0) return { kind: 'none' };
+  const present = new Set(occurrences.map((o) => o.reminder.tagColor));
+  const distinctColors = TAG_COLORS.filter((c) => present.has(c.key));
+  if (distinctColors.length === 0) return { kind: 'empty' };
+  if (distinctColors.length === 1) return { kind: 'solid', hex: distinctColors[0].hex };
+  return { kind: 'multi', hexes: distinctColors.map((c) => c.hex) };
+}
+
 function getDueDate(reminder: Reminder, now: Date): Date {
   const anchor = new Date(reminder.startDate);
   return reminder.repeats
@@ -282,7 +314,7 @@ function CalendarView({ reminders, now }: { reminders: Reminder[]; now: Date }) 
               const isToday = isSameDay(day, today);
               const isSelected = isSameDay(day, selectedDate);
               const dayOccurrences = occurrencesByDay.get(dateKey(day));
-              const hasFuture = day >= today;
+              const indicator = dayColorIndicator(dayOccurrences);
               return (
                 <Pressable
                   key={dateKey(day)}
@@ -300,9 +332,9 @@ function CalendarView({ reminders, now }: { reminders: Reminder[]; now: Date }) 
                       {day.getDate()}
                     </Text>
                   </View>
-                  {dayOccurrences && dayOccurrences.length > 0 && (
-                    <View style={[styles.dayDot, hasFuture ? styles.dayDotFuture : styles.dayDotPast]} />
-                  )}
+                  {indicator.kind === 'empty' && <View style={styles.dayDotEmpty} />}
+                  {indicator.kind === 'solid' && <View style={[styles.dayDot, { backgroundColor: indicator.hex }]} />}
+                  {indicator.kind === 'multi' && <MultiColorDot hexes={indicator.hexes} size={10} />}
                 </Pressable>
               );
             })}
@@ -1213,16 +1245,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   dayDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     marginTop: 3,
   },
-  dayDotFuture: {
-    backgroundColor: '#2f6fed',
+  dayDotEmpty: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 3,
+    borderWidth: 1,
+    borderColor: '#999',
+    backgroundColor: 'transparent',
   },
-  dayDotPast: {
-    backgroundColor: '#bbb',
+  multiColorDot: {
+    flexDirection: 'row',
+    overflow: 'hidden',
+    marginTop: 3,
   },
   selectedDayPanel: {
     marginTop: 16,
