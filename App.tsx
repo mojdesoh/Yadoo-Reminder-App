@@ -862,25 +862,36 @@ function ReminderApp() {
       </Modal>
 
       <Modal visible={detailReminder !== null} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, styles.modalCardContent, { paddingBottom: insets.bottom + 20 }]}>
+        <Pressable style={styles.modalOverlay} onPress={() => setDetailReminder(null)}>
+          <Pressable
+            style={[styles.modalCard, styles.modalCardContent, { paddingBottom: insets.bottom + 20 }]}
+            onPress={() => {}}
+          >
             {detailReminder && (
               <>
                 <Text style={styles.modalHeader}>{detailReminder.title}</Text>
 
-                <Text style={styles.label}>Starting date and time</Text>
-                <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.startDate))}</Text>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Starting date and time</Text>
+                  <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.startDate))}</Text>
+                </View>
 
-                <Text style={styles.label}>Repetition</Text>
-                <Text style={styles.detailValue}>{repeatLabel(detailReminder)}</Text>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Repetition</Text>
+                  <Text style={styles.detailValue}>{repeatLabel(detailReminder)}</Text>
+                </View>
 
-                <Text style={styles.label}>Creation date and time</Text>
-                <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.createdAt))}</Text>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Creation date and time</Text>
+                  <Text style={styles.detailValue}>{formatDateTime(new Date(detailReminder.createdAt))}</Text>
+                </View>
 
-                <Text style={styles.label}>Tag colour</Text>
-                <View style={styles.tagColorRow}>
-                  <TagColorDot hex={tagColorHex(detailReminder.tagColor)} />
-                  <Text style={styles.detailValue}>{tagColorLabel(detailReminder.tagColor)}</Text>
+                <View style={[styles.detailRow, styles.detailRowLast]}>
+                  <Text style={styles.detailLabel}>Tag colour</Text>
+                  <View style={styles.tagColorRow}>
+                    <TagColorDot hex={tagColorHex(detailReminder.tagColor)} />
+                    <Text style={styles.detailValue}>{tagColorLabel(detailReminder.tagColor)}</Text>
+                  </View>
                 </View>
 
                 <View style={styles.modalActions}>
@@ -900,8 +911,8 @@ function ReminderApp() {
                 </View>
               </>
             )}
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -1040,6 +1051,20 @@ const styles = StyleSheet.create({
   detailValue: {
     fontSize: 16,
     color: '#111',
+  },
+  detailRow: {
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e2e2e2',
+  },
+  detailRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 0,
+  },
+  detailLabel: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 6,
   },
   tagColorRow: {
     flexDirection: 'row',
